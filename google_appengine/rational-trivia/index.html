@@ -2,6 +2,170 @@
 <head>
   <title>Rational Trivia</title>
 </head>
+<script>
+  var confidence = 25; // Value between 0 and 100
+  var confidence_bar_width = 200;
+  var confidence_bar_height = 20;
+
+  // From:
+  // http://stackoverflow.com/questions/55677/how-do-i-get-the-coordinates-of-a-mouse-click-on-a-canvas-element
+  function relMouseCoords(event){
+      var totalOffsetX = 0;
+      var totalOffsetY = 0;
+      var canvasX = 0;
+      var canvasY = 0;
+      var currentElement = this;
+
+      do{
+          totalOffsetX += currentElement.offsetLeft;
+          totalOffsetY += currentElement.offsetTop;
+      }
+      while(currentElement = currentElement.offsetParent)
+
+      canvasX = event.pageX - totalOffsetX;
+      canvasY = event.pageY - totalOffsetY;
+
+      return {x:canvasX, y:canvasY}
+  }
+  HTMLCanvasElement.prototype.relMouseCoords = relMouseCoords;
+
+  // Called when they click on the bar.
+  function confidence_click(ev) {
+    confidence_element = document.getElementById('confidence_canvas');
+    var coords = confidence_element.relMouseCoords(ev);
+    var x = coords.x;
+    confidence = 100 * x / confidence_bar_width;
+    draw_confidence();
+  }
+
+  // Draws the confidence bar.
+  function draw_confidence() {
+    confidence_element = document.getElementById('confidence_canvas');
+    context = confidence_element.getContext('2d');
+
+    // Blanks the bar.
+    context.beginPath();
+    context.rect(0, 0, confidence_bar_width, confidence_bar_height);
+    context.fillStyle = 'white';
+    context.fill();
+
+    // Draws the red bar.
+    context.beginPath();
+    var red_bar_width = (confidence / 100) * confidence_bar_width;
+    context.rect(0, 0, red_bar_width, confidence_bar_height);
+    context.fillStyle = 'red';
+    context.fill();
+
+    context.rect(0, 0, confidence_bar_width, confidence_bar_height);
+    context.lineWidth = 5;
+    context.strokeStyle = 'black';
+    context.stroke();
+
+    percent_element = document.getElementById('confidence_percent');
+    percent_element.innerHTML = confidence;
+  }
+
+  window.onload = function() {
+    draw_confidence();
+    confidence_element = document.getElementById('confidence_canvas');
+    confidence_element.addEventListener('click', confidence_click);
+  }
+</script>
 <body>
+
+<script>
+  var selected_answer = 0;
+
+  function clicked(n) {
+    selected_answer = n;
+    for (var i=1; i<=4; i++) {
+      var answer = document.getElementById("answer" + i);
+      if (i == n) {
+        answer.style.backgroundColor = "yellow";
+      } else {
+        answer.style.backgroundColor = "white";
+      }
+    }
+  }
+
+
+  function submit() {
+    form_element = document.getElementById("send_form");
+    form_element.elements['answer'].value = selected_answer;
+    form_element.elements['confidence'].value = confidence;
+    form_element.submit();
+  }
+
+  function commit() {
+    if (selected_answer == 0) {
+      alert("Select an answer before clicking 'commit'");
+      return;
+    }
+    form_element = document.getElementById("send_form");
+
+    var answer_element = document.getElementById("answer" + selected_answer);
+    var correct_answer = form_element.elements['correct_answer'].value;
+    var correct_answer_element =
+        document.getElementById("answer" + correct_answer);
+
+    if (correct_answer == selected_answer) {
+      answer_element.style.backgroundColor = "lightgreen";
+      setTimeout(submit, 1000)
+    } else {
+      answer_element.style.backgroundColor = "red";
+      correct_answer_element.style.backgroundColor = "lightgreen";
+      setTimeout(submit, 3000)
+    }
+  }
+
+  function reset_stats() {
+    form_element = document.getElementById("send_form");
+    form_element.elements['reset_stats'].value = 'true';
+    form_element.submit();
+  }
+
+
+</script>
+
+<br>
+<ul>
+
+<form method=POST action="/post" id="send_form">
+  <input type=hidden name="question_uuid" value="{{ uuid }}">
+  <input type=hidden name="answer" id="send_answer">
+  <input type=hidden name="confidence" id="send_confidence">
+  <input type=hidden name="correct_answer" value="{{ correct_answer }}">
+  <input type=hidden name="reset_stats" value="false">
+</form>
+
+{{ question }}
+<br>
+<br>
+
+<ul>
+  {% for a in answers %}
+  <span id="answer{{ loop.index }}" onclick="clicked({{loop.index}})">
+    {{ loop.index }}: {{ a }}</span></br>
+  {% endfor %}
+</ul>
+
+<br>
+
+Click to set confidence:
+<canvas id="confidence_canvas" width="205" height="20"></canvas>
+<span id="confidence_percent"></span>%
+<br>
+<br>
+<input type=button value="Commit" onclick="commit()"> 
+
+<hr>
+Your performance so far:<br>
+<ul>
+  Questions answered correctly: {{ correct_questions }}/{{ total_questions }}
+  ({{ correctness }}%) <br>
+
+  Confidence error: {{ confidence_error }}%
+  <br>
+<input type=button value="Reset Statistics" onclick="reset_stats()"> 
 </body>
 </html>

@@ -8,6 +8,7 @@ import random
 import uuid
 import jinja2
 import os
+import math
 
 from webapp2_extras import sessions
 
@@ -24,26 +25,26 @@ class User(db.Model):
   total_answers = db.IntegerProperty()
 
 class MultipleChoiceQuestion(object):
-  def __init__(self, guid, q, a1, a2, a3, a4, answer):
-    self.guid = guid
-    self.q = q
-    self.a1 = a1
-    self.a2 = a2
-    self.a3 = a3
-    self.a4 = a4
-    self.answer = answer
+  def __init__(self, uuid, q, a1, a2, a3, a4, answer):
+    self.uuid_ = uuid
+    self.q_ = q
+    self.a1_ = a1
+    self.a2_ = a2
+    self.a3_ = a3
+    self.a4_ = a4
+    self.answer_ = answer
 
-  def guid(self):
-    return self.guid
+  def uuid(self):
+    return self.uuid_
 
   def answers(self):
-    return [self.a1, self.a2, self.a3, self.a4]
+    return [self.a1_, self.a2_, self.a3_, self.a4_]
 
   def answer(self):
-    return self.answer
+    return self.answer_
 
   def question(self):
-    return self.q
+    return self.q_
 
 class Questions(object):
   def __init__(self):
@@ -56,6 +57,7 @@ class Questions(object):
     for fn in files:
       f = open(fn, "r")
       for line in f:
+        line = line.rstrip("\n")
         fields = line.split('|')
 
         q = MultipleChoiceQuestion(self.num_questions,
@@ -87,79 +89,88 @@ class MainPage(webapp2.RequestHandler):
   def session(self):
     return self.session_store.get_session()
 
+  def session_reset(self):
+    self.session['total_questions'] = 0
+    self.session['correct_questions'] = 0
+    self.session['confidence_error'] = 0
+
+  # First time users get caught here.
+  def session_check(self):
+    if ((self.session.get('total_questions') is None) or
+        (self.session.get('correct_questions') is None) or
+        (self.session.get('confidence_error') is None)):
+         session_reset()
+
+  def post(self):
+    if self.request.get('reset_stats') == "true":
+      self.session_reset()
+      self.redirect('/')
+      return
+
+    # Get the form values
+    answer = self.request.get('answer')
+    confidence = float(self.request.get('confidence'))
+    uuid = self.request.get('question_uuid')
+    correct_answer = self.request.get('correct_answer')
+
+    logging.debug("answer:%s/%s confidence:%s uuid:%s", answer,
+                  correct_answer, confidence, uuid)
+
+    self.session_check()
+
+    total_questions = self.session.get('total_questions')
+    total_questions += 1
+    self.session['total_questions'] = total_questions
+
+    # FANCIER MATH GOES HERE
+
+    # Calculates our confidence error for just this question
+    was_correct = False
+    absolute_error = 1.0  # prediction vs. reality for this question
+    if answer == correct_answer:
+      was_correct = True
+      absolute_error = math.fabs(100 - confidence)
+    else:
+      absolute_error = math.fabs(0 - confidence)
+
+    # Sums total correct questions for all time
+    correct_questions = self.session.get('correct_questions')
+    if was_correct:
+      correct_questions += 1
+    self.session['correct_questions'] = correct_questions
+
+    # Calculates overall confidence error for all time
+    confidence_error = self.session.get('confidence_error')
+    confidence_error = \
+      (confidence_error*(total_questions-1) + absolute_error) / total_questions
+    self.session['confidence_error'] = confidence_error
+
+    # Calculates correctness rate for all time
+    self.session['correctness'] = 1.0 * correct_questions / total_questions
+
+    self.redirect('/')
+
   def get(self):
+    q = questions.random_question()
+
+    self.session_check()
 
     template_values = {
-        'foo': "foo"
+        # User stats:
+        'confidence_error': round(self.session.get('confidence_error')),
+        'correctness': int(100 * self.session.get('correctness')),
+        'correct_questions': self.session.get('correct_questions'),
+        'total_questions': self.session.get('total_questions'),
+
+        # The next question:
+        'question': q.question(),
+        'answers': q.answers(),
+        'correct_answer': q.answer(),
+        'uuid': q.uuid(),
     }
 
     template = jinja_environment.get_template('index.html')
     self.response.out.write(template.render(template_values))
-
-    return
-
-    foo = self.session.get('bar')
-
-    logging.info("foo=" + str(foo))
-
-    self.response.out.write('<html><body>')
-
-    q = questions.random_question()
-    self.response.out.write("Question: " + q.question())
-
-    return
-
-    guestbook_name=self.request.get('guestbook_name')
-
-    # Ancestor Queries, as shown here, are strongly consistent with the High
-    # Replication Datastore. Queries that span entity groups are eventually
-    # consistent. If we omitted the ancestor from this query there would be a
-    # slight chance that Greeting that had just been written would not show up
-    # in a query.
-    greetings = db.GqlQuery("SELECT * "
-                            "FROM Greeting "
-                            "WHERE ANCESTOR IS :1 "
-                            "ORDER BY date DESC LIMIT 10",
-                            guestbook_key(guestbook_name))
-
-    for greeting in greetings:
-      if greeting.author:
-        self.response.out.write(
-            '<b>%s</b> wrote:' % greeting.author)
-      else:
-        self.response.out.write('An anonymous person wrote:')
-      self.response.out.write('<blockquote>%s</blockquote>' %
-                              cgi.escape(greeting.content))
-
-    self.response.out.write("""
-          <form action="/sign?%s" method="post">
-            <div><textarea name="content" rows="3" cols="60"></textarea></div>
-            <div><input type="submit" value="Sign Guestbook"></div>
-          </form>
-          <hr>
-          <form>Guestbook name: <input value="%s" name="guestbook_name">
-          <input type="submit" value="switch"></form>
-        </body>
-      </html>""" % (urllib.urlencode({'guestbook_name': guestbook_name}),
-                          cgi.escape(guestbook_name)))
-
-
-class Guestbook(webapp2.RequestHandler):
-  def post(self):
-    # We set the same parent key on the 'Greeting' to ensure each greeting is in
-    # the same entity group. Queries across the single entity group will be
-    # consistent. However, the write rate to a single entity group should
-    # be limited to ~1/second.
-    guestbook_name = self.request.get('guestbook_name')
-    greeting = Greeting(parent=guestbook_key(guestbook_name))
-
-    if users.get_current_user():
-      greeting.author = users.get_current_user().nickname()
-
-    greeting.content = self.request.get('content')
-    greeting.put()
-    self.redirect('/?' + urllib.urlencode({'guestbook_name': guestbook_name}))
-
 
 questions = Questions()
 
@@ -169,6 +180,6 @@ session_secret['webapp2_extras.sessions'] = {
 }
 
 app = webapp2.WSGIApplication([('/', MainPage),
-                               ('/sign', Guestbook)],
+                               ('/post', MainPage),],
                               debug=True,
                               config=session_secret)
